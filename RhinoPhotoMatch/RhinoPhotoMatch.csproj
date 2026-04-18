@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <AssemblyName>RhinoPhotoMatch</AssemblyName>
+    <RootNamespace>RhinoPhotoMatch</RootNamespace>
+    <OutputType>Library</OutputType>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Rename output to .rhp so Rhino recognises it as a plugin -->
+    <TargetExt>.rhp</TargetExt>
+    <!-- Copy NuGet runtime assemblies (OpenCvSharp.dll, MathNet, etc.) to build output -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+<PropertyGroup Condition="'$(Configuration)'=='Debug'">
+  <StartAction>Program</StartAction>
+  <StartProgram>C:\Program Files\Rhino 8\System\Rhino.exe</StartProgram>
+  <StartArguments>/nosplash</StartArguments>
+</PropertyGroup>
+
+  <!-- Copy plugin + all NuGet dependencies to Rhino's AppData plugin folder -->
+  <Target Name="DeployPlugin" AfterTargets="Build">
+    <PropertyGroup>
+      <RhinoPluginDir>$(APPDATA)\McNeel\Rhinoceros\8.0\Plug-ins\RhinoPhotoMatch</RhinoPluginDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(RhinoPluginDir)" />
+    <!-- Plugin assembly -->
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(RhinoPluginDir)" OverwriteReadOnlyFiles="true" />
+    <!-- Managed NuGet DLLs (OpenCvSharp.dll, MathNet.Numerics.dll, etc.) -->
+    <ItemGroup>
+      <_ManagedDeps Include="$(OutDir)*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ManagedDeps)" DestinationFolder="$(RhinoPluginDir)" OverwriteReadOnlyFiles="true" />
+    <!-- Native OpenCvSharpExtern.dll — lives under runtimes/win-x64/native/ in the output dir -->
+    <ItemGroup>
+      <_NativeDeps Include="$(OutDir)runtimes\win-x64\native\*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_NativeDeps)" DestinationFolder="$(RhinoPluginDir)" OverwriteReadOnlyFiles="true" />
+    <Message Text="Deployed $(TargetFileName) + dependencies → $(RhinoPluginDir)" Importance="high" />
+  </Target>
+
+  <ItemGroup>
+    <!-- RhinoCommon: exclude runtime assets — Rhino provides them at load time -->
+    <PackageReference Include="RhinoCommon" Version="8.*" ExcludeAssets="runtime" />
+    <!-- Computer vision -->
+    <PackageReference Include="OpenCvSharp4" Version="4.9.0.*" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.9.0.*" />
+    <!-- Linear algebra -->
+    <PackageReference Include="MathNet.Numerics" Version="5.*" />
+  </ItemGroup>
+
+</Project>
