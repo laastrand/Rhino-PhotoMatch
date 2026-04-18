@@ -28,21 +28,28 @@ namespace RhinoPhotoMatch.Core
             }
             if (targetView == null) return false;
 
-            var vp = targetView.ActiveViewport;
-
             // Switch to perspective if not already
-            if (!vp.IsPerspectiveProjection)
-                vp.ChangeToPerspectiveProjection(true, 50.0);
+            if (!targetView.ActiveViewport.IsPerspectiveProjection)
+                targetView.ActiveViewport.ChangeToPerspectiveProjection(true, 50.0);
 
             // FOV → 35mm equivalent lens length (36mm film width standard)
             double lensLength = 18.0 / Math.Tan(result.FovRadians / 2.0);
             lensLength = Math.Max(1.0, Math.Min(lensLength, 2000.0)); // clamp to sane range
 
+            // Apply camera directly to the live viewport
+            var vp = targetView.ActiveViewport;
             vp.SetCameraLocation(result.CameraLocation, false);
             vp.SetCameraDirection(result.CameraDirection, true);
-            vp.Camera35mmLensLength = lensLength;
             vp.CameraUp = result.CameraUp;
+            vp.Camera35mmLensLength = lensLength;
 
+            // Persist as named view — delete existing first, then add fresh
+            int idx = doc.NamedViews.FindByName(pair.Name);
+            if (idx >= 0)
+                doc.NamedViews.Delete(idx);
+            var viewInfo = new Rhino.DocObjects.ViewInfo(vp);
+            viewInfo.Name = pair.Name;
+            doc.NamedViews.Add(viewInfo);
             RhinoApp.WriteLine("=== ViewportSync applied ===");
             RhinoApp.WriteLine($"  Location set:  {result.CameraLocation}");
             RhinoApp.WriteLine($"  Location got:  {vp.CameraLocation}");

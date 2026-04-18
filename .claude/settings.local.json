@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dotnet build:*)"
+      "Bash(dotnet build:*)",
+      "Bash(powershell -Command 'Add-Type -Path '\\\\''C:/Program Files/Rhino 8/System/RhinoCommon.dll'\\\\''; [Rhino.DocObjects.Tables.NamedViewTable].GetMethods\\(\\) | Where-Object { $_.Name -eq '\\\\''Restore'\\\\'' } | ForEach-Object { $_.ToString\\(\\) }')"
     ]
   }
 }

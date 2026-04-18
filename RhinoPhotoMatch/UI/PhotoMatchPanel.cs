@@ -209,15 +209,24 @@ namespace RhinoPhotoMatch.UI
                 Doc?.Views.Redraw();
             };
 
-            // View button — activates the linked viewport
+            // View button — restores the named view written by PMCalibrate
             var viewBtn = new Button { Text = "View", Width = 42 };
             viewBtn.Click += (_, _) =>
             {
                 var d = Doc;
                 if (d == null) return;
-                foreach (var view in d.Views)
-                    if (view.ActiveViewport.Id == pair.ActiveViewportId)
-                    { d.Views.ActiveView = view; break; }
+                int idx = d.NamedViews.FindByName(pair.Name);
+                if (idx >= 0)
+                {
+                    d.NamedViews.Restore(idx, d.Views.ActiveView.ActiveViewport);
+                    d.Views.ActiveView.Redraw();
+                }
+                else
+                {
+                    MessageBox.Show(
+                        $"No calibrated view found for \"{pair.Name}\".\nRun PMCalibrate first.",
+                        "RhinoPhotoMatch");
+                }
             };
 
             // Relink button
