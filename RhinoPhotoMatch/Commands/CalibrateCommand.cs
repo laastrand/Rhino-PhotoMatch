@@ -39,9 +39,13 @@ namespace RhinoPhotoMatch.Commands
             }
 
             // Prompt for lens — user can enter FOV (degrees) or focal length (mm, 35mm equiv.)
+            // Prefer the focal length stored on the pair (set by the panel or a previous calibration).
             var linkedVp = PicturePlaneManager.FindViewport(doc, pair.ActiveViewportId);
-            double defaultFov    = linkedVp != null ? ViewportSync.LensLengthToFov(linkedVp.Camera35mmLensLength) : 60.0;
-            double defaultFocalMm = ViewportSync.FovToLensLength(defaultFov);
+            double defaultFocalMm = pair.FocalLengthMm > 0
+                ? pair.FocalLengthMm
+                : ViewportSync.FovToLensLength(
+                    linkedVp != null ? ViewportSync.LensLengthToFov(linkedVp.Camera35mmLensLength) : 60.0);
+            double defaultFov = ViewportSync.LensLengthToFov(defaultFocalMm);
 
             // Use GetNumber with an option to switch input mode
             bool useFocalLength = false;
@@ -125,6 +129,10 @@ namespace RhinoPhotoMatch.Commands
                 RhinoApp.WriteLine("  WARNING: high reprojection error — check that reference points are accurate and not all coplanar.");
             RhinoApp.WriteLine($"  Camera location : ({result.CameraLocation.X:F3}, {result.CameraLocation.Y:F3}, {result.CameraLocation.Z:F3})");
             RhinoApp.WriteLine($"  Camera direction: ({result.CameraDirection.X:F3}, {result.CameraDirection.Y:F3}, {result.CameraDirection.Z:F3})");
+
+            // Persist result and the actual focal length used so the panel can read them back.
+            pair.LastCalibrationResult = result;
+            pair.FocalLengthMm = ViewportSync.FovToLensLength(fov);
 
             if (!ViewportSync.Apply(doc, pair, result))
             {

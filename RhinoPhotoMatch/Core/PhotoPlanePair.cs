@@ -62,6 +62,15 @@ namespace RhinoPhotoMatch.Core
         /// <summary>Most recently solved vanishing-point result. Null until PMSolveVanishingPoints runs.</summary>
         public VanishingPointResult? LastVanishingResult { get; set; }
 
+        /// <summary>35mm-equivalent focal length in mm used for PnP calibration. Defaults to 50mm.</summary>
+        public double FocalLengthMm { get; set; } = 50.0;
+
+        /// <summary>Source hint shown in the panel: "default", "from EXIF", or "estimated".</summary>
+        public string FocalLengthHint { get; set; } = "default";
+
+        /// <summary>Most recently solved PnP calibration result. Null until PMCalibrate succeeds.</summary>
+        public CalibrationResult? LastCalibrationResult { get; set; }
+
         // Baked world-space frame — set once when the plane is created, never changed
         public Point3d  PlaneCenter   { get; set; }
         public Vector3d PlaneRight    { get; set; }  // unit vector, world space
