@@ -31,6 +31,7 @@ A minimal Rhino 8 C# plugin that loads successfully in Rhino with no functionali
 - Verify the plugin loads in Rhino 8 without errors
 - Set up the folder structure:
 ```
+
 RhinoPhotoMatch/
 ├── RhinoPhotoMatchPlugin.cs
 ├── Commands/
@@ -446,6 +447,60 @@ The ONNX backend ships with **DA3-Mono-Small fp16 (~50 MB)** as a relative-depth
   - Set `isMetric` based on which model the subprocess is configured for (read from `da3` config or assume `false` unless the user opted into Metric/Nested)
 - Add a "Depth backend" dropdown to plugin settings: `Auto`, `Bundled (ONNX)`, `Python CLI (DA3)`. `Auto` prefers subprocess if available, otherwise ONNX
 - On first run, show a one-time tip pointing users at the DA3 install instructions if they want better quality and metric depth
+
+---
+
+# NPZ Parser
+
+## Why
+The `Da3SubprocessEstimator` reads depth and confidence arrays from the DA3 CLI's `mini_npz` export. `.npz` is the NumPy archive format — a ZIP file containing one or more `.npy` arrays. There is no maintained .NET library for this that's worth the dependency weight; a focused parser handling only the subset DA3 actually emits is ~50 lines and keeps the plugin dependency-free for this concern.
+
+## What
+A small reader in `Core/Depth/Npz/` that opens an `.npz` file and returns a dictionary of named arrays. Supports only the dtypes and shapes DA3 produces: float32 (`<f4`) C-order arrays of arbitrary rank. Anything else throws a clear exception rather than guessing.
+
+The reader exposes parsed arrays as `NpyArray` records with a typed accessor (`AsFloat32()`) that block-copies the raw bytes into a `float[]`. Callers reshape into 2D using the recorded shape.
+
+## Constraints
+### Must Not
+- Must not pull in NumSharp, IronPython, or any other heavyweight numpy-compatible dependency — `System.IO.Compression` from the BCL is enough
+- Must not silently accept unsupported dtypes or Fortran-order arrays — throw `NotSupportedException` with the offending dtype/order in the message
+- Must not load the entire `.npz` into memory if only one array is needed — expose a way to read a single named entry
+- Must not leak file handles — wrap streams in `using` blocks
+
+### Out of Scope
+- Writing `.npz` or `.npy` files (read-only)
+- Object dtype, structured dtypes, complex numbers, datetime64, unicode strings
+- NPY format version 3.0 (rare; DA3 emits 1.0 or 2.0)
+- Pickle-encoded arrays (`allow_pickle=True` numpy output) — these are a security risk and DA3 doesn't produce them
+
+## Tasks
+- Create `Core/Depth/Npz/NpyArray.cs`:
+  - Record with `string Dtype`, `int[] Shape`, `byte[] RawData`, `bool FortranOrder`
+  - Method `float[] AsFloat32()` — validates `Dtype == "<f4"` then `Buffer.BlockCopy` into a new `float[]` of length `RawData.Length / 4`
+  - Helper `float[,] AsFloat32_2D()` — calls `AsFloat32()`, validates `Shape.Length == 2`, reshapes into `[Shape[0], Shape[1]]`
+- Create `Core/Depth/Npz/NpzReader.cs`:
+  - Static `Dictionary<string, NpyArray> Load(string path)` — opens the ZIP, reads every entry, strips the `.npy` suffix from the entry name as the dictionary key
+  - Static `NpyArray LoadSingle(string path, string entryName)` — reads one entry without parsing the rest, for memory efficiency
+  - Static `NpyArray ParseNpy(Stream stream)` — does the actual NPY parsing
+- NPY parsing (`ParseNpy`) follows the [documented format](https://numpy.org/doc/stable/reference/generated/numpy.lib.format.html):
+  - Read 6 magic bytes, verify they equal `\x93NUMPY` (one byte 0x93 then ASCII "NUMPY")
+  - Read 1 byte major version, 1 byte minor version. Accept 1.x and 2.x; throw on anything else
+  - Read header length: 2 bytes little-endian for v1.x, 4 bytes little-endian for v2.x
+  - Read `headerLength` bytes of ASCII; this is a Python dict literal
+  - Parse the dict with three regexes (it's deterministic Python `repr` output, not arbitrary Python):
+    - `'descr':\s*'([^']+)'` → dtype string
+    - `'fortran_order':\s*(True|False)` → fortran_order bool
+    - `'shape':\s*\(([^)]*)\)` → shape tuple, split on `,`, parse ints, drop empty trailing element
+  - Validate dtype is `<f4` (little-endian float32); throw `NotSupportedException` otherwise — DA3 only emits this
+  - Validate `fortran_order == false`; throw if true
+  - Compute total element count from shape, read `count * 4` bytes into `RawData`
+  - Return `new NpyArray { Dtype, Shape, RawData, FortranOrder }`
+- Add unit tests in `Tests/Depth/NpzReaderTests.cs`:
+  - Round-trip a known float32 array written by Python's `numpy.savez` (commit the test fixture file to the repo)
+  - Verify shape, dtype, and a handful of element values match exactly
+  - Verify graceful failure on a fixture with `allow_pickle=True` output
+  - Verify graceful failure on a fixture with float64 dtype
+- Document in `NpzReader.cs` XML comments that this is a deliberate subset reader for DA3's output, not a general-purpose npz library
 
 ---
 
