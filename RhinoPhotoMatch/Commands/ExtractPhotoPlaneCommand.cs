@@ -17,7 +17,7 @@ namespace RhinoPhotoMatch.Commands
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
             var plugin   = RhinoPhotoMatchPlugin.Instance;
-            var registry = plugin.Registry;
+            var registry = plugin.GetRegistry(doc);
 
             if (registry.Pairs.Count == 0)
             {

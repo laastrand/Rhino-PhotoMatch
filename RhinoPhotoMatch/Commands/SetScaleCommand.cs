@@ -26,7 +26,7 @@ namespace RhinoPhotoMatch.Commands
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            var registry = RhinoPhotoMatchPlugin.Instance.Registry;
+            var registry = RhinoPhotoMatchPlugin.Instance.GetRegistry(doc);
             if (registry.Pairs.Count == 0)
             {
                 RhinoApp.WriteLine("PMSetScale: no photo planes in the registry.");

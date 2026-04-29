@@ -16,7 +16,7 @@ namespace RhinoPhotoMatch.Commands
         {
             var plugin = RhinoPhotoMatchPlugin.Instance;
 
-            int n = SessionSerializer.Load(doc, plugin.Registry, plugin.Conduit);
+            int n = SessionSerializer.Load(doc, plugin.GetRegistry(doc), plugin.GetConduit(doc));
 
             if (n < 0)
             {

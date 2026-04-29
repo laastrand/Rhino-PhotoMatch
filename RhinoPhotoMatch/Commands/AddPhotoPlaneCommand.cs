@@ -45,7 +45,7 @@ namespace RhinoPhotoMatch.Commands
             }
 
             // 2. Auto-generate a name; let user optionally rename it
-            var registry = RhinoPhotoMatchPlugin.Instance.Registry;
+            var registry = RhinoPhotoMatchPlugin.Instance.GetRegistry(doc);
             string autoName = registry.GenerateAutoName();
 
             string name = autoName;

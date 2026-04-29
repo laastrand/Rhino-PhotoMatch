@@ -16,14 +16,14 @@ namespace RhinoPhotoMatch.Commands
         {
             var plugin = RhinoPhotoMatchPlugin.Instance;
 
-            if (plugin.Registry.Pairs.Count == 0)
+            if (plugin.GetRegistry(doc).Pairs.Count == 0)
             {
                 RhinoApp.WriteLine("PMSaveSession: no photo planes to save.");
                 return Result.Nothing;
             }
 
-            SessionSerializer.Save(doc, plugin.Registry);
-            RhinoApp.WriteLine($"PMSaveSession: {plugin.Registry.Pairs.Count} plane(s) saved to document.");
+            SessionSerializer.Save(doc, plugin.GetRegistry(doc));
+            RhinoApp.WriteLine($"PMSaveSession: {plugin.GetRegistry(doc).Pairs.Count} plane(s) saved to document.");
             return Result.Success;
         }
     }

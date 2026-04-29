@@ -108,7 +108,7 @@ namespace RhinoPhotoMatch.Core
 
             pair.ThumbnailBitmap = null; // force reload on next panel refresh
 
-            RhinoPhotoMatchPlugin.Instance.Conduit.InvalidateMaterial(pair.Name);
+            RhinoPhotoMatchPlugin.Instance.GetConduit(doc).InvalidateMaterial(pair.Name);
             doc.Views.Redraw();
         }
 

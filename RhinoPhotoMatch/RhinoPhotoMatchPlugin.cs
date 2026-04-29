@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -21,18 +22,38 @@ namespace RhinoPhotoMatch
 
         public override PlugInLoadTime LoadTime => PlugInLoadTime.AtStartup;
 
-        // --- Feature: Camera-Linked Picture Planes ---
+        // ------------------------------------------------------------------ //
+        //  Per-document state — one registry + conduit per open document
+        // ------------------------------------------------------------------ //
 
-        /// <summary>Registry of all photo plane / named camera pairs for this session.</summary>
-        public PhotoPlaneRegistry Registry { get; } = new PhotoPlaneRegistry();
+        private readonly Dictionary<uint, (PhotoPlaneRegistry Registry, PhotoPlaneConduit Conduit)>
+            _states = new();
 
-        /// <summary>DisplayConduit that draws photo planes each frame.</summary>
-        public PhotoPlaneConduit Conduit { get; private set; } = null!;
+        public PhotoPlaneRegistry GetRegistry(RhinoDoc doc)  => GetOrCreate(doc.RuntimeSerialNumber).Registry;
+        public PhotoPlaneConduit  GetConduit(RhinoDoc doc)   => GetOrCreate(doc.RuntimeSerialNumber).Conduit;
+        public PhotoPlaneRegistry GetRegistry(uint sn)       => GetOrCreate(sn).Registry;
+        public PhotoPlaneConduit  GetConduit(uint sn)        => GetOrCreate(sn).Conduit;
+
+        private (PhotoPlaneRegistry Registry, PhotoPlaneConduit Conduit) GetOrCreate(uint sn)
+        {
+            if (!_states.TryGetValue(sn, out var state))
+            {
+                var registry = new PhotoPlaneRegistry();
+                var conduit  = new PhotoPlaneConduit(registry);
+                conduit.Enabled = true;
+                state = (registry, conduit);
+                _states[sn] = state;
+            }
+            return state;
+        }
+
+        // ------------------------------------------------------------------ //
+        //  Plugin lifecycle
+        // ------------------------------------------------------------------ //
 
         protected override LoadReturnCode OnLoad(ref string errorMessage)
         {
             // Make NuGet dependency DLLs findable from the plugin's output directory.
-            // Rhino does not automatically search there, so we hook AssemblyResolve.
             var pluginDir = Path.GetDirectoryName(GetType().Assembly.Location) ?? "";
 
             AppDomain.CurrentDomain.AssemblyResolve += (_, args) =>
@@ -42,17 +63,12 @@ namespace RhinoPhotoMatch
                 return File.Exists(dll) ? Assembly.LoadFrom(dll) : null;
             };
 
-            // Load OpenCvSharp.dll explicitly now so we can install a P/Invoke resolver on it
-            // before any of its types are touched. This intercepts the DllImport("OpenCvSharpExtern")
-            // calls and redirects them to the full path in the plugin directory.
             var openCvManagedPath = Path.Combine(pluginDir, "OpenCvSharp.dll");
             if (File.Exists(openCvManagedPath))
             {
                 var openCvAssembly = Assembly.LoadFrom(openCvManagedPath);
                 NativeLibrary.SetDllImportResolver(openCvAssembly, (libName, _, _) =>
                 {
-                    // Check the plugin dir first, then the runtimes subdirectory where
-                    // NuGet places native DLLs when not publishing a self-contained app.
                     var candidates = new[]
                     {
                         Path.Combine(pluginDir, libName + ".dll"),
@@ -65,21 +81,15 @@ namespace RhinoPhotoMatch
                 });
             }
 
-            Conduit = new PhotoPlaneConduit(Registry);
-            Conduit.Enabled = true;
-
-            // Register the dockable panel
             Rhino.UI.Panels.RegisterPanel(
                 this,
                 typeof(UI.PhotoMatchPanel),
                 "Photo Match",
                 System.Drawing.SystemIcons.Information);
 
-            // Auto-save session data whenever the document is about to be written
             RhinoDoc.BeginSaveDocument += OnBeginSaveDocument;
-
-            // Auto-restore session data after a document has finished loading
-            RhinoDoc.EndOpenDocument += OnEndOpenDocument;
+            RhinoDoc.EndOpenDocument   += OnEndOpenDocument;
+            RhinoDoc.CloseDocument     += OnCloseDocument;
 
             RhinoApp.WriteLine("RhinoPhotoMatch loaded.");
             return LoadReturnCode.Success;
@@ -89,45 +99,60 @@ namespace RhinoPhotoMatch
         {
             RhinoDoc.BeginSaveDocument -= OnBeginSaveDocument;
             RhinoDoc.EndOpenDocument   -= OnEndOpenDocument;
+            RhinoDoc.CloseDocument     -= OnCloseDocument;
 
-            if (Conduit != null)
-                Conduit.Enabled = false;
+            foreach (var state in _states.Values)
+                state.Conduit.Enabled = false;
+            _states.Clear();
+        }
+
+        // ------------------------------------------------------------------ //
+        //  Document event handlers
+        // ------------------------------------------------------------------ //
+
+        private void OnCloseDocument(object? sender, DocumentEventArgs e)
+        {
+            if (e.Document == null) return;
+            uint sn = e.Document.RuntimeSerialNumber;
+            if (_states.TryGetValue(sn, out var state))
+            {
+                state.Conduit.Enabled = false;
+                _states.Remove(sn);
+            }
         }
 
         private void OnBeginSaveDocument(object? sender, DocumentSaveEventArgs e)
         {
-            // Only auto-save to the document being saved (not autosave backups)
             var doc = e.Document;
-            if (doc == null || Registry.Pairs.Count == 0) return;
-            Core.SessionSerializer.Save(doc, Registry);
+            if (doc == null) return;
+            var registry = GetRegistry(doc);
+            if (registry.Pairs.Count == 0) return;
+            Core.SessionSerializer.Save(doc, registry);
         }
 
         private void OnEndOpenDocument(object? sender, DocumentOpenEventArgs e)
         {
             var doc = e.Document;
             if (doc == null) return;
-
-            // Defer one idle tick so Rhino has finished building the views collection
-            // before we try to look up viewports by name.
+            _pendingRestoreDocs.Enqueue(doc);
             RhinoApp.Idle += OnIdleRestoreOnce;
-            _pendingRestoreDoc = doc;
         }
 
-        private RhinoDoc? _pendingRestoreDoc;
+        private readonly Queue<RhinoDoc> _pendingRestoreDocs = new();
 
         private void OnIdleRestoreOnce(object? sender, EventArgs e)
         {
-            RhinoApp.Idle -= OnIdleRestoreOnce;   // fire only once
+            RhinoApp.Idle -= OnIdleRestoreOnce;
 
-            var doc = _pendingRestoreDoc;
-            _pendingRestoreDoc = null;
-            if (doc == null) return;
-
-            int n = Core.SessionSerializer.Load(doc, Registry, Conduit);
-            if (n > 0)
+            while (_pendingRestoreDocs.TryDequeue(out var doc))
             {
-                doc.Views.Redraw();
-                RhinoApp.WriteLine($"RhinoPhotoMatch: {n} photo plane(s) restored from document.");
+                var (registry, conduit) = GetOrCreate(doc.RuntimeSerialNumber);
+                int n = Core.SessionSerializer.Load(doc, registry, conduit);
+                if (n > 0)
+                {
+                    doc.Views.Redraw();
+                    RhinoApp.WriteLine($"RhinoPhotoMatch: {n} photo plane(s) restored from document.");
+                }
             }
         }
     }

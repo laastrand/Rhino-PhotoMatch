@@ -16,7 +16,7 @@ namespace RhinoPhotoMatch.Commands
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            var registry = RhinoPhotoMatchPlugin.Instance.Registry;
+            var registry = RhinoPhotoMatchPlugin.Instance.GetRegistry(doc);
 
             if (registry.Pairs.Count == 0)
             {
@@ -53,7 +53,7 @@ namespace RhinoPhotoMatch.Commands
                 return Result.Cancel;
             }
 
-            RhinoPhotoMatchPlugin.Instance.Conduit.InvalidateMaterial(target.Name);
+            RhinoPhotoMatchPlugin.Instance.GetConduit(doc).InvalidateMaterial(target.Name);
             registry.RemovePair(doc, target);
             doc.Views.Redraw();
             return Result.Success;

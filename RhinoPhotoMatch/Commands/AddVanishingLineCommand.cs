@@ -18,7 +18,7 @@ namespace RhinoPhotoMatch.Commands
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            var registry = RhinoPhotoMatchPlugin.Instance.Registry;
+            var registry = RhinoPhotoMatchPlugin.Instance.GetRegistry(doc);
             if (registry.Pairs.Count == 0)
             {
                 RhinoApp.WriteLine("PMAddVanishingLine: no photo planes in the registry.");
@@ -158,7 +158,7 @@ namespace RhinoPhotoMatch.Commands
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            var registry = RhinoPhotoMatchPlugin.Instance.Registry;
+            var registry = RhinoPhotoMatchPlugin.Instance.GetRegistry(doc);
             if (registry.Pairs.Count == 0)
             {
                 RhinoApp.WriteLine("PMClearVanishingLines: no photo planes in the registry.");

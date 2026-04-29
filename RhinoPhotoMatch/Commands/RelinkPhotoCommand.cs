@@ -17,7 +17,7 @@ namespace RhinoPhotoMatch.Commands
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            var registry = RhinoPhotoMatchPlugin.Instance.Registry;
+            var registry = RhinoPhotoMatchPlugin.Instance.GetRegistry(doc);
 
             if (registry.Pairs.Count == 0)
             {
@@ -67,7 +67,7 @@ namespace RhinoPhotoMatch.Commands
             }
 
             // 3. Update material and refresh
-            registry.RelinkPhoto(doc, target, newPath, RhinoPhotoMatchPlugin.Instance.Conduit);
+            registry.RelinkPhoto(doc, target, newPath, RhinoPhotoMatchPlugin.Instance.GetConduit(doc));
             return Result.Success;
         }
     }

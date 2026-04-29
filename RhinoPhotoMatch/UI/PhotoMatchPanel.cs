@@ -106,7 +106,7 @@ namespace RhinoPhotoMatch.UI
             };
 
             // Subscribe to events
-            RhinoPhotoMatchPlugin.Instance.Registry.Changed += OnRegistryChanged;
+            Registry.Changed += OnRegistryChanged;
             RhinoView.Modified                              += OnViewModified;
             RhinoDoc.EndOpenDocument                        += OnEndOpenDocument;
 
@@ -118,7 +118,7 @@ namespace RhinoPhotoMatch.UI
         {
             if (disposing)
             {
-                var registry = RhinoPhotoMatchPlugin.Instance?.Registry;
+                var registry = Registry;
                 if (registry != null) registry.Changed -= OnRegistryChanged;
                 RhinoView.Modified       -= OnViewModified;
                 RhinoDoc.EndOpenDocument -= OnEndOpenDocument;
@@ -127,6 +127,9 @@ namespace RhinoPhotoMatch.UI
         }
 
         private RhinoDoc? Doc => RhinoDoc.FromRuntimeSerialNumber(_documentSerialNumber);
+
+        private PhotoPlaneRegistry Registry => RhinoPhotoMatchPlugin.Instance.GetRegistry(_documentSerialNumber);
+        private PhotoPlaneConduit  Conduit  => RhinoPhotoMatchPlugin.Instance.GetConduit(_documentSerialNumber);
 
         // ------------------------------------------------------------------ //
         //  Event handlers
@@ -159,7 +162,7 @@ namespace RhinoPhotoMatch.UI
         {
             _listStack.Items.Clear();
 
-            var registry = RhinoPhotoMatchPlugin.Instance.Registry;
+            var registry = Registry;
 
             foreach (var pair in registry.Pairs)
                 _listStack.Items.Add(BuildRow(pair));
@@ -205,7 +208,7 @@ namespace RhinoPhotoMatch.UI
             slider.ValueChanged += (_, _) =>
             {
                 pair.Transparency = slider.Value / 100.0;
-                RhinoPhotoMatchPlugin.Instance.Conduit.InvalidateMaterial(pair.Name);
+                Conduit.InvalidateMaterial(pair.Name);
                 Doc?.Views.Redraw();
             };
 
@@ -364,8 +367,8 @@ namespace RhinoPhotoMatch.UI
             // Changed → RebuildList → GetOrLoadThumbnail loads the new thumbnail.
             var doc = Doc ?? RhinoDoc.ActiveDoc;
             if (doc != null)
-                RhinoPhotoMatchPlugin.Instance.Registry.RelinkPhoto(
-                    doc, pair, newPath, RhinoPhotoMatchPlugin.Instance.Conduit);
+                Registry.RelinkPhoto(
+                    doc, pair, newPath, Conduit);
         }
 
         // ------------------------------------------------------------------ //
@@ -383,8 +386,8 @@ namespace RhinoPhotoMatch.UI
             if (result != DialogResult.Yes) return;
 
             var doc = Doc ?? RhinoDoc.ActiveDoc;
-            RhinoPhotoMatchPlugin.Instance.Conduit.InvalidateMaterial(pair.Name);
-            RhinoPhotoMatchPlugin.Instance.Registry.RemovePair(
+            Conduit.InvalidateMaterial(pair.Name);
+            Registry.RemovePair(
                 doc ?? RhinoDoc.ActiveDoc!, pair);
             doc?.Views.Redraw();
             // Registry.Changed fires inside RemovePair → triggers RebuildList + PopulateDropDown
@@ -627,7 +630,7 @@ namespace RhinoPhotoMatch.UI
             string? prevName = _activePair?.Name;
 
             _pairDropDown.Items.Clear();
-            var registry = RhinoPhotoMatchPlugin.Instance.Registry;
+            var registry = Registry;
             foreach (var pair in registry.Pairs)
                 _pairDropDown.Items.Add(pair.Name);
 
@@ -695,7 +698,7 @@ namespace RhinoPhotoMatch.UI
         private void OnActivePairChanged(object? sender, EventArgs e)
         {
             if (_suppressDropDownChange) return;
-            var registry = RhinoPhotoMatchPlugin.Instance.Registry;
+            var registry = Registry;
             int idx = _pairDropDown.SelectedIndex;
             _activePair = (idx >= 0 && idx < registry.Pairs.Count) ? registry.Pairs[idx] : null;
             UpdateWorkflowState();
