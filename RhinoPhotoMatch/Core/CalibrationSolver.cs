@@ -130,7 +130,7 @@ namespace RhinoPhotoMatch.Core
 
             // Camera look direction in world = -(third row of R') = -(Rx180 applied to row 2 of R)
             //   = -(-r20, -r21, -r22) = (r20, r21, r22)   [rows of R, not columns]
-            var camDir = new RhinoVector3d(r20, r21, -r22);
+            var camDir = new RhinoVector3d(r20, r21, r22);
 
             // Camera up in world = second row of R' = Rx180 applied to row 1 of R
             //   = (-r10, -r11, -r12)

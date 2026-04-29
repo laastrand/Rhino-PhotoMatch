@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using Rhino;
 using Rhino.Display;
@@ -14,6 +15,103 @@ namespace RhinoPhotoMatch.Core
     /// </summary>
     public static class PicturePlaneManager
     {
+        // ------------------------------------------------------------------ //
+        //  Image rotation helpers
+        // ------------------------------------------------------------------ //
+
+        /// <summary>
+        /// Reads the EXIF Orientation tag and rotates/flips the bitmap to correct it.
+        /// Returns the original bitmap unchanged if no rotation is needed or EXIF is unavailable.
+        /// </summary>
+        public static Bitmap CorrectOrientation(Bitmap bmp)
+        {
+            const int ExifOrientationId = 0x112;
+            if (!bmp.PropertyIdList.Contains(ExifOrientationId)) return bmp;
+
+            var prop = bmp.GetPropertyItem(ExifOrientationId);
+            if (prop?.Value == null) return bmp;
+
+            int orientation = BitConverter.ToUInt16(prop.Value, 0);
+            switch (orientation)
+            {
+                case 2: bmp.RotateFlip(RotateFlipType.RotateNoneFlipX);   break;
+                case 3: bmp.RotateFlip(RotateFlipType.Rotate180FlipNone); break;
+                case 4: bmp.RotateFlip(RotateFlipType.Rotate180FlipX);    break;
+                case 5: bmp.RotateFlip(RotateFlipType.Rotate90FlipX);     break;
+                case 6: bmp.RotateFlip(RotateFlipType.Rotate90FlipNone);  break;
+                case 7: bmp.RotateFlip(RotateFlipType.Rotate270FlipX);    break;
+                case 8: bmp.RotateFlip(RotateFlipType.Rotate270FlipNone); break;
+            }
+            return bmp;
+        }
+
+        /// <summary>
+        /// Returns the path of a working copy for the given original image,
+        /// stored under %LOCALAPPDATA%\RhinoPhotoMatch\working\.
+        /// The path is stable across calls for the same original.
+        /// </summary>
+        public static string MakeWorkingCopyPath(string originalPath)
+        {
+            string workDir = Path.Combine(
+                System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
+                "RhinoPhotoMatch", "working");
+            Directory.CreateDirectory(workDir);
+            var hashBytes = System.Security.Cryptography.MD5.HashData(
+                System.Text.Encoding.UTF8.GetBytes(originalPath));
+            string prefix = Convert.ToHexString(hashBytes)[..8];
+            return Path.Combine(workDir, prefix + "_" + Path.GetFileName(originalPath));
+        }
+
+        /// <summary>
+        /// Applies the given rotation (90, 180, or 270) to the plane's working image,
+        /// updates PixelWidth/PixelHeight and AspectRatio on the pair, and invalidates
+        /// the conduit's material cache so the viewport texture reloads on next draw.
+        /// The original file at pair.ImagePath is never modified.
+        /// </summary>
+        public static void RotatePlaneImage(RhinoDoc doc, PhotoPlanePair pair, int degrees)
+        {
+            var flipType = degrees switch
+            {
+                90  => RotateFlipType.Rotate90FlipNone,
+                180 => RotateFlipType.Rotate180FlipNone,
+                270 => RotateFlipType.Rotate270FlipNone,
+                _   => throw new ArgumentException("degrees must be 90, 180, or 270")
+            };
+
+            // Ensure we have a working copy — never modify the user's original
+            if (pair.WorkingImagePath == null)
+            {
+                pair.WorkingImagePath = MakeWorkingCopyPath(pair.ImagePath);
+                File.Copy(pair.ImagePath, pair.WorkingImagePath, overwrite: true);
+            }
+
+            string workPath = pair.WorkingImagePath;
+            string tmpPath  = workPath + ".tmp";
+            string ext      = Path.GetExtension(workPath).ToLowerInvariant();
+            var fmt = ext == ".png" ? ImageFormat.Png : ImageFormat.Jpeg;
+
+            // Load → rotate → save to tmp, then atomically replace (avoids file-lock conflict)
+            using (var bmp = new Bitmap(workPath))
+            {
+                bmp.RotateFlip(flipType);
+                bmp.Save(tmpPath, fmt);
+            }
+            File.Move(tmpPath, workPath, overwrite: true);
+
+            if (degrees == 90 || degrees == 270)
+            {
+                (pair.PixelWidth, pair.PixelHeight) = (pair.PixelHeight, pair.PixelWidth);
+                pair.AspectRatio = (double)pair.PixelWidth / pair.PixelHeight;
+            }
+
+            pair.RotationDegrees = (pair.RotationDegrees + degrees) % 360;
+
+            pair.ThumbnailBitmap = null; // force reload on next panel refresh
+
+            RhinoPhotoMatchPlugin.Instance.Conduit.InvalidateMaterial(pair.Name);
+            doc.Views.Redraw();
+        }
+
         // ------------------------------------------------------------------ //
         //  Viewport lookup
         // ------------------------------------------------------------------ //

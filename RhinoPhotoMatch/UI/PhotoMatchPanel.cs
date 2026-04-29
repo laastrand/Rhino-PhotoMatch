@@ -209,6 +209,24 @@ namespace RhinoPhotoMatch.UI
                 Doc?.Views.Redraw();
             };
 
+            // Rotation buttons
+            var cwBtn  = new Button { Text = "\u21bb 90\u00b0", Width = 50 };
+            var ccwBtn = new Button { Text = "\u21ba 90\u00b0", Width = 50 };
+            cwBtn.Click += (_, _) =>
+            {
+                var d = Doc ?? RhinoDoc.ActiveDoc;
+                if (d == null) return;
+                PicturePlaneManager.RotatePlaneImage(d, pair, 90);
+                imgView.Image = GetOrLoadThumbnail(pair);
+            };
+            ccwBtn.Click += (_, _) =>
+            {
+                var d = Doc ?? RhinoDoc.ActiveDoc;
+                if (d == null) return;
+                PicturePlaneManager.RotatePlaneImage(d, pair, 270);
+                imgView.Image = GetOrLoadThumbnail(pair);
+            };
+
             // View button — restores the named view written by PMCalibrate
             var viewBtn = new Button { Text = "View", Width = 42 };
             viewBtn.Click += (_, _) =>
@@ -242,14 +260,16 @@ namespace RhinoPhotoMatch.UI
                 Rows =
                 {
                     new TableRow(
-                        new TableCell(imgView,    false),
-                        new TableCell(nameLabel,  false),
+                        new TableCell(imgView,     false),
+                        new TableCell(nameLabel,   false),
                         new TableCell(distStepper, false),
-                        new TableCell(slider,     false),
-                        new TableCell(viewBtn,    false),
-                        new TableCell(relinkBtn,  false),
-                        new TableCell(deleteBtn,  false),
-                        new TableCell(null, true)          // trailing spacer
+                        new TableCell(slider,      false),
+                        new TableCell(cwBtn,       false),
+                        new TableCell(ccwBtn,      false),
+                        new TableCell(viewBtn,     false),
+                        new TableCell(relinkBtn,   false),
+                        new TableCell(deleteBtn,   false),
+                        new TableCell(null, true)           // trailing spacer
                     )
                 },
                 Spacing = new Size(4, 0),

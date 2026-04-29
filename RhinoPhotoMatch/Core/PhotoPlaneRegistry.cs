@@ -31,13 +31,32 @@ namespace RhinoPhotoMatch.Core
         /// </summary>
         public PhotoPlanePair? CreatePair(RhinoDoc doc, string imagePath, string name)
         {
-            // Read pixel dimensions
+            // Read pixel dimensions, applying EXIF auto-correction if needed
             int pw, ph;
+            string? workingImagePath = null;
             try
             {
-                using var bmp = new Eto.Drawing.Bitmap(imagePath);
+                using var bmp = new System.Drawing.Bitmap(imagePath);
+
+                const int ExifOrientationId = 0x112;
+                bool hasNonTrivialOrientation = bmp.PropertyIdList.Contains(ExifOrientationId) &&
+                    bmp.GetPropertyItem(ExifOrientationId)?.Value is { } ov &&
+                    BitConverter.ToUInt16(ov, 0) > 1;
+
+                PicturePlaneManager.CorrectOrientation(bmp);
                 pw = bmp.Width;
                 ph = bmp.Height;
+
+                if (hasNonTrivialOrientation)
+                {
+                    workingImagePath = PicturePlaneManager.MakeWorkingCopyPath(imagePath);
+                    string ext = System.IO.Path.GetExtension(imagePath).ToLowerInvariant();
+                    var fmt = ext == ".png"
+                        ? System.Drawing.Imaging.ImageFormat.Png
+                        : System.Drawing.Imaging.ImageFormat.Jpeg;
+                    bmp.Save(workingImagePath, fmt);
+                    RhinoApp.WriteLine($"  EXIF orientation corrected — working copy saved.");
+                }
             }
             catch (Exception ex)
             {
@@ -49,6 +68,8 @@ namespace RhinoPhotoMatch.Core
             var activeVp = doc.Views.ActiveView.ActiveViewport;
 
             var pair = new PhotoPlanePair(name, imagePath, aspectRatio, pw, ph, activeVp.Id);
+            if (workingImagePath != null)
+                pair.WorkingImagePath = workingImagePath;
             _pairs.Add(pair);
             OnChanged();
 

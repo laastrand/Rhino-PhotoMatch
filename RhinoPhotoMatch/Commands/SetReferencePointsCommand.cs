@@ -77,18 +77,17 @@ namespace RhinoPhotoMatch.Commands
                     if (linkedView != null)
                         doc.Views.ActiveView = linkedView;
 
-                    // Use the baked frame so UV back-projection is stable regardless
-                    // of camera movement between picks.
-                    if (!pair.FrameBaked)
+                    // Recompute frame from the live viewport at pick time — this is stable
+                    // because the user is not moving the camera during a pick session, and
+                    // it avoids the bug where a stale/zero baked frame maps every click to
+                    // the same corner of the image.
+                    if (!PicturePlaneManager.ComputePlaneFrame(linkedVp, pair,
+                            out Point3d center, out Vector3d camRight, out Vector3d camUp,
+                            out double planeW, out double planeH))
                     {
-                        RhinoApp.WriteLine("PMSetReferencePoints: plane frame not baked — recreate the photo plane.");
+                        RhinoApp.WriteLine("PMSetReferencePoints: could not compute photo plane frame.");
                         break;
                     }
-                    var center   = pair.PlaneCenter;
-                    var camRight = pair.PlaneRight;
-                    var camUp    = pair.PlaneUp;
-                    var planeW   = pair.PlaneWorldW;
-                    var planeH   = pair.PlaneWorldH;
 
                     var photoPlane = new Plane(center, camRight, camUp);
 

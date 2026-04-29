@@ -25,15 +25,30 @@ namespace RhinoPhotoMatch.Core
         /// <summary>Identifier for the plane, e.g. PM_Photo_01.</summary>
         public string Name { get; set; }
 
-        /// <summary>Absolute path of the source image file.</summary>
+        /// <summary>Absolute path of the original source image file. Never modified.</summary>
         public string ImagePath { get; set; }
 
+        /// <summary>
+        /// Path of the working copy used for texture display after EXIF correction or manual rotation.
+        /// Null if no correction or rotation has been applied (the original is used directly).
+        /// </summary>
+        public string? WorkingImagePath { get; set; }
+
+        /// <summary>The texture path to use for display: working copy if present, original otherwise.</summary>
+        public string EffectiveImagePath => WorkingImagePath ?? ImagePath;
+
+        /// <summary>
+        /// Additional manual rotation applied on top of EXIF auto-correction.
+        /// Valid values: 0, 90, 180, 270. Applied when the texture is written to disk.
+        /// </summary>
+        public int RotationDegrees { get; set; } = 0;
+
         /// <summary>Image width / height.</summary>
-        public double AspectRatio { get; private set; }
+        public double AspectRatio { get; set; }
 
         /// <summary>Source image pixel dimensions.</summary>
-        public int PixelWidth  { get; private set; }
-        public int PixelHeight { get; private set; }
+        public int PixelWidth  { get; set; }
+        public int PixelHeight { get; set; }
 
         /// <summary>3D world point ↔ 2D image pixel coordinate pairs used for PnP calibration.</summary>
         public List<(Point3d WorldPoint, Point2d ImagePoint)> ReferencePairs { get; } = new();

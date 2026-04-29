@@ -7,6 +7,7 @@
 - Linear Algebra: Math.NET Numerics (NuGet)
 - UI: Eto.Forms (ships with Rhino)
 - Serialization: System.Text.Json
+- Depth estimation (optional features): Microsoft.ML.OnnxRuntime + Microsoft.ML.OnnxRuntime.DirectML (NuGet) for in-process inference; Depth Anything 3 Python CLI as an optional higher-quality backend
 
 ---
 
@@ -288,53 +289,29 @@ Calibration data (camera parameters, reference points, photo path, method used) 
 # Dockable Panel UI
 
 ## Why
-The individual commands need a unified, guided UI so the workflow is clear and discoverable without requiring the user to memorise command names. The panel also needs to show all loaded photo planes at a glance so the user can manage them, adjust transparency, and switch between cameras without using the command line.
+The individual commands need a unified, guided UI so the workflow is clear and discoverable without requiring the user to memorise command names.
 
 ## What
-A single dockable Eto.Forms panel with two sections:
-
-**Top section — Photo Plane List:** shows all registered photo planes, one row per plane, with thumbnail, name, distance from camera, transparency slider, and action buttons.
-
-**Bottom section — Calibration Workflow:** guides the user through calibration for whichever plane is currently active.
+A single dockable Eto.Forms panel that guides the user through the full workflow in order, with status indicators at each step.
 
 ## Constraints
 ### Must Not
 - Must not use WinForms or WPF — use Eto.Forms only (required for future macOS support)
 - Must not allow the user to proceed to a later step if an earlier required step is incomplete
-- Must not recompute distance on every UI tick — update distance only on viewport change events or when the panel is explicitly refreshed
 
 ### Out of Scope
 - Multiple simultaneous calibration sessions in the panel
 - Theming or custom styling beyond Rhino's default Eto appearance
-- Drag to reorder photo planes
 
 ## Tasks
-
-**Photo Plane List (implement first)**
-
-Each row in the list shows:
-- **Thumbnail** — 48×48px, cropped from the source image file using `System.Drawing`. Load once and cache on `PhotoPlanePair`. Show a grey placeholder if the image cannot be read
-- **Name** — the pair name (e.g. `PM_Photo_01`), non-editable label
-- **Distance** — distance in model units from the current camera location to `pair.PlaneCenter`, formatted as `"12.3 m"`. Computed as `(vp.CameraLocation - pair.PlaneCenter).Length`. Updated when the active viewport changes via `RhinoView.SetActiveView` event or a Refresh button
-- **Transparency slider** — Eto `Slider` 0–100, default 0 (fully opaque). On change, update the material transparency on the plane object: `material.Transparency = sliderValue / 100.0` then `doc.Materials.Modify(material, index, true)` and `doc.Views.Redraw()`
-- **Activate camera button** — small button labelled `"📷"` or `"View"`. Activates the named view associated with the pair: find the named view by name in `doc.NamedViews` and restore it to the active viewport
-- **Relink photo button** — small button labelled `"Relink"`. Opens a file picker (JPG/PNG), updates `pair.ImagePath`, calls `doc.Materials.Modify` to update the texture path, regenerates the thumbnail, redraws
-- **Delete button** — small button labelled `"✕"`. Warns user with a confirmation dialog, then deletes the plane mesh object from the doc, removes the named view, removes from registry, removes the row from the list
-
-Implement the list as a `Eto.Forms.StackLayout` of rows inside a `Scrollable`, rebuilt whenever the registry changes. Do not use `GridView` — it does not support mixed controls per cell in Eto.
-
-**Calibration Workflow (implement second, below the list)**
-
-- Step 1: Active plane selector — shows which plane is being calibrated (dropdown if multiple)
-- Step 2: Focal length field (mm) — pre-filled from EXIF or estimate, user can override
-- Step 3: Pick reference points button — triggers `PMSetReferencePoints`, shows count of pairs
-- Step 4: Calibrate button — triggers `PMCalibrate`, shows reprojection error after
-- Step 5: Fine-tune controls — nudge buttons (Forward/Back, Left/Right, Up/Down), step size selector (0.1 / 1.0 / 10.0), lens length +/- buttons
-
-**Registration**
-
+- Implement `PhotoMatchPanel.cs` as a dockable `Eto.Forms.Panel`
+  - Step 1: Import Photo (file picker button, shows loaded photo filename)
+  - Step 2: Choose method (radio: Reference Points / Vanishing Lines)
+  - Step 3: Pick references (button triggers command, shows count of pairs collected)
+  - Step 4: Calibrate (button triggers `PMCalibrate`, shows reprojection error)
+  - Step 5: Review (overlay toggle, lock view toggle, re-run button)
+- Implement `ReferencePointPicker.cs` for the point-pairing sub-workflow
 - Register panel with Rhino using `Rhino.UI.Panels.RegisterPanel()`
-- Panel should be openable via `PMPanel` command and from the Rhino Panels menu
 
 ---
 
@@ -428,6 +405,132 @@ Each parameter has:
 
 ---
 
+# Depth Estimation Backend
+
+## Why
+The depth-based features (`PMImportDepthAsPlane`, `PMImportPointCloud`) need a depth map for the photo. Two delivery paths are realistic: a bundled in-process ONNX model with no external dependencies, and a subprocess call to a user-installed Depth Anything 3 Python CLI for higher-quality results. Both must live behind a single interface so the rest of the plugin doesn't care which one ran.
+
+## What
+A `Core/Depth/` subsystem with one interface — `IDepthEstimator` — and two implementations: `OnnxDepthEstimator` (default, bundled) and `Da3SubprocessEstimator` (optional, detected at runtime). The user picks the backend in plugin settings, defaulting to ONNX. Each implementation returns the same `DepthResult` record so callers are interchangeable.
+
+The ONNX backend ships with **DA3-Mono-Small fp16 (~50 MB)** as a relative-depth model. The subprocess backend invokes `da3 image <path> --export-format mini_npz --export-dir <tmp>` and reads the resulting `.npz` for depth + confidence.
+
+## Constraints
+### Must Not
+- Must not block the Rhino UI thread during inference — run on a background task with progress reporting
+- Must not silently fall back from subprocess to ONNX if the user explicitly selected subprocess — show an error with the diagnostic
+- Must not bundle anything larger than 100 MB in the plugin installer; the Mono-Small fp16 model fits, anything larger is downloaded on first use
+- Must not require the user to write Python config — the subprocess backend auto-discovers the `da3` binary on `PATH` and reports clearly if not found
+
+### Out of Scope
+- Multi-view depth (only the single calibrated photo is processed)
+- Per-pixel confidence-driven retries — confidence is exposed but used only for filtering, not iteration
+- macOS GPU acceleration for ONNX (DirectML is Windows-only; macOS falls back to CPU EP in v1)
+
+## Tasks
+- Add `Microsoft.ML.OnnxRuntime.DirectML` NuGet package (Windows) and `Microsoft.ML.OnnxRuntime` (cross-platform CPU fallback)
+- Define `IDepthEstimator.cs` in `Core/Depth/`:
+  - `Task<DepthResult> EstimateAsync(string imagePath, CancellationToken ct, IProgress<double> progress)`
+  - `bool IsAvailable { get; }` and `string Diagnostic { get; }` so the panel can disable buttons + show why
+- Define `DepthResult` record: `float[,] depth`, `float[,] confidence`, `int width`, `int height`, `bool isMetric`, `string sourceLabel` (e.g. `"DA3-Mono-Small (ONNX)"`, `"DA3-Metric-Large (subprocess)"`)
+- Implement `OnnxDepthEstimator.cs`:
+  - Lazy-load the bundled `.onnx` from the plugin directory on first call
+  - Try DirectML EP, fall back to CPU EP with a one-time warning logged to the Rhino command line
+  - Preprocess: resize image to nearest multiple of 14 (model's patch size), normalize with ImageNet stats, NHWC→NCHW, fp32→fp16
+  - Run inference, post-process to a `float[,]` depth map at original photo resolution via bicubic resize
+  - Set `isMetric = false` for the Mono-Small variant
+- Implement `Da3SubprocessEstimator.cs`:
+  - On construction, run `da3 --version` to detect; cache result
+  - On `EstimateAsync`: copy photo to temp dir, invoke `da3 image <photo> --export-format mini_npz --export-dir <tmp> --process-res 504`
+  - Parse the `.npz` using a minimal numpy-compatible reader (write one — the format is documented and trivial for fp32 arrays)
+  - Set `isMetric` based on which model the subprocess is configured for (read from `da3` config or assume `false` unless the user opted into Metric/Nested)
+- Add a "Depth backend" dropdown to plugin settings: `Auto`, `Bundled (ONNX)`, `Python CLI (DA3)`. `Auto` prefers subprocess if available, otherwise ONNX
+- On first run, show a one-time tip pointing users at the DA3 install instructions if they want better quality and metric depth
+
+---
+
+# PMImportDepthAsPlane
+
+## Why
+After calibrating a photo, the user often wants more than a flat picture plane. A depth-displaced mesh — built from the photo's predicted depth and projected into 3D along the calibrated camera's frustum — gives a faithful sense of foreground/background separation that a flat plane cannot. It replaces the alpha-cutout PNG workflow for cases where the photo subject has continuous depth (a building facade with recessed windows, a landscape with a slope, a foreground figure standing in space). The mesh becomes a real piece of scene reference geometry the user can model against.
+
+## What
+A command `PMImportDepthAsPlane` that takes the active photo plane / camera pair, runs depth estimation on the source photo, and creates a new mesh in the document. The mesh sits inside the calibrated camera's frustum: its vertices are the back-projection of each photo pixel along the camera ray, scaled by the predicted depth. The photo is applied as a texture so the mesh is photo-realistic when viewed from the named camera and reveals its 3D structure when viewed from any other angle.
+
+A grid resolution slider (default 256×192) controls how many vertices are sampled from the depth map. Higher = more detail, slower. Confidence threshold filters out noisy pixels before mesh construction.
+
+## Constraints
+### Must Not
+- Must not run unless the active photo plane has a calibrated camera — show an error pointing the user at calibration first
+- Must not create the mesh if the depth map's confidence is below 5% across more than half the image — warn and abort, the photo is unsuitable
+- Must not destroy the original picture plane — the displaced mesh is a new object alongside it
+- Must not block the Rhino UI thread during inference or meshing
+- Must not place vertices behind the camera or at extreme distances — clamp depth to a sensible range and drop pixels outside it
+
+### Out of Scope
+- Multi-view depth fusion (only single-photo depth)
+- Animated or live-updating meshes — this is a one-shot operation
+- NURBS surface fitting from depth (mesh only in v1)
+- Hole-filling for low-confidence regions — those pixels are simply omitted
+
+## Tasks
+- Implement `ImportDepthAsPlaneCommand.cs`:
+  - Resolve the active `PhotoPlanePair`; abort if no calibration on its named view
+  - Show a small Eto dialog: grid resolution (slider 64–1024, default 256), confidence threshold (slider 0–1, default 0.3), depth scale multiplier (textbox, default 1.0 — used when relative depth needs manual scaling), apply texture (checkbox, default true)
+  - Run `IDepthEstimator.EstimateAsync` with a progress bar
+  - Pass the result to `DepthMeshBuilder`
+  - Add the resulting mesh to the document; assign the same material as the picture plane (or a clone of it) if "apply texture" is on; add it to a layer named `PhotoMatch::DepthMeshes`
+- Implement `Core/Depth/DepthMeshBuilder.cs`:
+  - Read `ViewportInfo` from the calibrated named view to get camera location, frustum, and the per-pixel ray direction at each grid sample
+  - Downsample the depth map to the requested grid resolution (bilinear)
+  - For each grid cell `(u, v)`: compute the ray from camera through that pixel using `ViewportInfo.GetFrustumLine` or manual reconstruction from the intrinsics; place a vertex at `cameraLocation + rayDirection * depth[u,v] * scale`
+  - Mark vertices below confidence threshold as invalid; skip faces that touch any invalid vertex
+  - Build `Rhino.Geometry.Mesh`: add vertices, add quad faces between adjacent grid cells, set texture coordinates `(u/W, 1 - v/H)`, call `ComputeNormals()` and `Compact()`
+  - For relative-depth backends (`isMetric == false`), auto-scale so the median depth lands at the picture plane's existing distance from the camera. This makes the result usable without the user fiddling with the scale slider
+- Add an "Import depth as plane" button to the dockable panel under each registered photo plane in the list, enabled only when the plane is calibrated
+- Show in the command line after creation: vertex count, face count, percentage of pixels dropped below confidence threshold, and the source label from `DepthResult`
+
+---
+
+# PMImportPointCloud
+
+## Why
+Some users want depth-derived geometry without the topology constraints of a mesh — a point cloud is faster to generate, handles disocclusions naturally (no stretched faces across depth discontinuities), and is the right primitive for downstream workflows like surface fitting, modelling reference, or point-snapping during modelling. It also matches the output format that the photogrammetry and DA3-blender communities already use, so users coming from those workflows feel at home.
+
+## What
+A command `PMImportPointCloud` that runs depth estimation on the active photo plane's photo and creates a `Rhino.Geometry.PointCloud` object whose points are the back-projected depth samples, colored from the source photo. Density slider controls how many pixels are sampled. Confidence threshold filters noise. Optional intensity values (one per point, set from confidence) let downstream tools weight by reliability.
+
+## Constraints
+### Must Not
+- Must not run without a calibrated camera on the active photo plane — show an error pointing at calibration
+- Must not generate point clouds larger than 5 million points by default — show a warning and ask for confirmation if the user requests more
+- Must not block the UI thread during inference, projection, or AddRange
+- Must not silently drop points without telling the user — log the count of points filtered by confidence and the count clamped by depth range
+
+### Out of Scope
+- Mesh reconstruction from the point cloud (Poisson, Ball-Pivoting) — those belong to a future `PMReconstructFromPointCloud` command and Open3D-style workflows
+- Cloud-to-cloud registration across multiple photos
+- LAS, E57 export — Rhino's native PointCloud is sufficient for v1; users can export from there
+
+## Tasks
+- Implement `ImportPointCloudCommand.cs`:
+  - Resolve the active `PhotoPlanePair`; abort if no calibration
+  - Show an Eto dialog: density (slider 1%–100% of source pixels, default 25% — implemented as stride), confidence threshold (slider 0–1, default 0.3), depth scale (textbox, default 1.0), include normals (checkbox, default true), store confidence as point intensity (checkbox, default false)
+  - Pre-compute the point count from density and warn if it exceeds 5,000,000
+  - Run `IDepthEstimator.EstimateAsync` with progress
+  - Pass the result to `DepthPointCloudBuilder`
+  - Add the resulting `PointCloud` to the document on a layer named `PhotoMatch::PointClouds`
+- Implement `Core/Depth/DepthPointCloudBuilder.cs`:
+  - Same ray-projection math as `DepthMeshBuilder` (factor the shared logic into a `CameraRayProjector` helper)
+  - Stride through the depth map at the configured density
+  - For each kept pixel: compute the 3D point, sample the source photo's RGB at that pixel for the point color, optionally compute a normal from the cross product of neighbouring depth-derived points
+  - Build a single `Rhino.Geometry.PointCloud`; use the appropriate `AddRange` overload depending on which optional channels the user enabled (points, points+colors, points+normals+colors, points+normals+colors+values)
+  - For relative-depth backends, apply the same auto-scaling rule as the mesh builder: median depth lands at the picture plane's distance
+- Add an "Import point cloud" button to the dockable panel under each registered photo plane, enabled only when calibrated
+- Show in the command line after creation: total points, points dropped by confidence, points dropped by depth-range clamp, source label, and the bounding box of the resulting cloud
+
+---
+
 # Reference Links
 
 - RhinoCommon SDK: https://developer.rhino3d.com/guides/rhinocommon/
@@ -439,3 +542,12 @@ Each parameter has:
 - fSpy: https://fspy.io/
 - fSpy Blender importer (reference for matrix conversion): https://github.com/stuffmatic/fSpy-Blender
 - fSpy file format: https://github.com/stuffmatic/fSpy/blob/develop/project_file_format.md
+- Depth Anything 3 (ByteDance Seed): https://github.com/ByteDance-Seed/Depth-Anything-3
+- Depth Anything 3 project page: https://depth-anything-3.github.io/
+- Depth Anything 3 ONNX export script (RWTH Aachen): https://github.com/ika-rwth-aachen/ros2-depth-anything-v3-trt/tree/main/onnx
+- DA3 ONNX models on Hugging Face (Xenova): https://huggingface.co/onnx-community/depth-anything-v3-small
+- DA3 Blender addon (reference for depth-to-geometry workflow): https://github.com/xy-gao/DA3-blender
+- ONNX Runtime DirectML execution provider: https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html
+- Microsoft.ML.OnnxRuntime.DirectML NuGet: https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.DirectML
+- RhinoCommon Mesh class: https://developer.rhino3d.com/api/rhinocommon/rhino.geometry.mesh
+- RhinoCommon PointCloud class: https://developer.rhino3d.com/api/rhinocommon/rhino.geometry.pointcloud

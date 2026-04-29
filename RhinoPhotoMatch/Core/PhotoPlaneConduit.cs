@@ -223,7 +223,7 @@ namespace RhinoPhotoMatch.Core
                 Shine         = 0,
                 Transparency  = 0
             };
-            docMat.SetBitmapTexture(pair.ImagePath);
+            docMat.SetBitmapTexture(pair.EffectiveImagePath);
 
             var displayMat = new DisplayMaterial(docMat)
             {
